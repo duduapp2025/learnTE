@@ -1,0 +1,134 @@
+name: 'Fetch and Process Magazine'
+description: 'Install Calibre, run Python script, and publish results to GitHub Releases'
+inputs:
+  mag_id:
+    description: 'Magazine ID (ny, te, tm)'
+    required: true
+  mag_name:
+    description: 'Magazine Name'
+    required: true
+  issue_date:
+    description: 'Issue Date (YYYY-MM-DD)'
+    required: false
+  overwrite_existing_release:
+    description: 'Whether to overwrite assets when the release already exists'
+    required: false
+    default: 'false'
+  github_token:
+    description: 'GitHub Token'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Calibre
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libegl1 \
+          libopengl0 \
+          libxcb-cursor0 \
+          libnss3 \
+          libxcomposite1 \
+          libxrandr2 \
+          libxtst6 \
+          libxkbcommon0 \
+          libgbm1 \
+          libfontconfig1 \
+          libgl1 \
+          libpulse0 \
+          libxrender1 \
+          libdbus-1-3 \
+          wget && \
+        (sudo apt-get install -y libasound2 || sudo apt-get install -y libasound2t64)
+        
+        url=https://download.calibre-ebook.com/linux-installer.sh
+        sudo -v && wget -nv -O- $url | sudo sh /dev/stdin
+
+    - name: Setup WARP
+      if: env.ACT != 'true'
+      uses: fscarmen/warp-on-actions@v1.1
+      with:
+        stack: dual
+
+    - name: Run Processing Script
+      shell: bash
+      run: python helper/main.py ${{ inputs.mag_id }} "${{ inputs.issue_date }}"
+
+    - name: Upload Artifact
+      if: env.ACT != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.DATE }}-${{ inputs.mag_id }}
+        path: converted_ebooks
+
+    - name: Publish GitHub Release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        OVERWRITE_EXISTING_RELEASE: ${{ inputs.overwrite_existing_release }}
+      run: |
+        set -euo pipefail
+
+        TAG="${{ inputs.mag_id }}-${{ env.DATE }}"
+        TITLE="${{ inputs.mag_name }} - ${{ env.DATE }}"
+        ASSET_DIR="converted_ebooks/${{ env.DATE }}"
+
+        mapfile -d '' ASSETS < <(
+          find "$ASSET_DIR" -maxdepth 1 -type f \
+            \( -name '*.pdf' -o -name '*.epub' \) -print0
+        )
+        if [ "${#ASSETS[@]}" -eq 0 ]; then
+          echo "No release assets found in $ASSET_DIR"
+          exit 1
+        fi
+
+        if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          if [ "$OVERWRITE_EXISTING_RELEASE" = "true" ]; then
+            echo "Release $TAG already exists; replacing all assets with newly generated files."
+            gh release view "$TAG" \
+              --repo "${{ github.repository }}" \
+              --json assets \
+              --jq '.assets[].name' | while IFS= read -r existing_asset; do
+                gh release delete-asset "$TAG" "$existing_asset" \
+                  --repo "${{ github.repository }}" \
+                  --yes
+              done
+            gh release upload "$TAG" "${ASSETS[@]}" \
+              --repo "${{ github.repository }}" \
+              --clobber
+          else
+            echo "Release $TAG already exists; keeping the existing release and assets."
+          fi
+        else
+          gh release create "$TAG" "${ASSETS[@]}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "$TITLE" \
+            --notes "Automatically generated ${{ inputs.mag_name }} issue for ${{ env.DATE }}."
+        fi
+
+    - name: Update magazine index
+      if: env.ACT != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -euo pipefail
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git pull --rebase origin "${{ github.ref_name }}"
+        python helper/generate_index.py "${{ github.repository }}" INDEX.md
+        git add INDEX.md
+        if git diff --cached --quiet; then
+          echo "Magazine index is already up to date."
+        else
+          git commit -m "docs: update magazine release index"
+          git push origin "HEAD:${{ github.ref_name }}"
+        fi
