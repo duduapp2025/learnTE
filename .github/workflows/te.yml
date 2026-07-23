@@ -1,0 +1,39 @@
+name: The Economist
+run-name: "The Economist: ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_date:
+        description: 'Issue Date (YYYY-MM-DD)'
+        required: false
+      overwrite_existing_release:
+        description: 'Overwrite existing Release assets'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '0 22 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: magazine-publishing
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Fetch and Process
+        uses: ./.github/actions/fetch-mag
+        with:
+          mag_id: te
+          mag_name: "The Economist"
+          issue_date: ${{ github.event.inputs.issue_date }}
+          overwrite_existing_release: ${{ inputs.overwrite_existing_release || false }}
+          github_token: ${{ secrets.GITHUB_TOKEN || github.token }}
