@@ -1,14 +1,3 @@
-# eMagzines
-
-使用 GitHub Actions 定时抓取英文杂志，并生成 PDF 和 EPUB 文件。生成的文件会发布为 GitHub Release Assets，目前抓取的杂志包括：
-
-- The Economist
-
-- The New Yorker
-- TIME
-
-推荐从 [Magazine Index](INDEX.md) 浏览和下载，也可以直接进入仓库的 [Releases](https://github.com/plsy1/emagzines/releases) 页面下载。
-
 ## 个人使用
 
 ### 使用 GitHub Actions
