@@ -17,58 +17,101 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 def get_article_links(page, edition_url):
     """
-    从周刊页面获取所有文章链接
+    从周刊页面获取所有文章链接 - 改进版，适配多种页面结构
     """
     print(f"正在访问: {edition_url}")
     
-    # ===== 修改点：使用更宽容的等待策略 =====
     try:
-        # 先尝试快速加载
+        # 使用 domcontentloaded 快速加载
         page.goto(edition_url, timeout=30000, wait_until="domcontentloaded")
-        # 额外等待几秒让内容渲染
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(5000)  # 等待动态内容
     except Exception as e:
         print(f"页面加载超时，尝试继续: {e}")
-        # 如果超时，尝试用更激进的方式
         try:
             page.goto(edition_url, timeout=30000, wait_until="commit")
         except:
             print("页面加载完全失败，跳过")
             return []
     
-    # 尝试关闭不必要的弹窗或通知
+    # 关闭可能干扰的弹窗
     try:
         page.evaluate("document.querySelectorAll('[class*=\"cookie\"], [class*=\"consent\"]').forEach(el => el.remove())")
     except:
         pass
     
-    # 等待文章列表加载
-    try:
-        page.wait_for_selector('article, a[href*="/"]', timeout=15000)
-    except:
-        print("警告：未找到文章容器，尝试继续...")
+    # ===== 修改点：使用更通用的策略提取文章链接 =====
+    links = []
     
-    # 获取所有文章链接
-    links = page.evaluate('''
+    # 方法1：从 __NEXT_DATA__ 中提取（最可靠）
+    try:
+        next_data = page.evaluate('''
+            () => {
+                const script = document.getElementById('__NEXT_DATA__');
+                if (script) {
+                    try {
+                        return JSON.parse(script.innerText);
+                    } catch(e) {}
+                }
+                return null;
+            }
+        ''')
+        if next_data:
+            print("从 __NEXT_DATA__ 提取文章链接...")
+            # 尝试不同的数据路径
+            articles = []
+            try:
+                articles = next_data['props']['pageProps']['content']['articles']
+            except:
+                try:
+                    articles = next_data['props']['pageProps']['content']['components']
+                except:
+                    try:
+                        articles = next_data['props']['pageProps']['articles']
+                    except:
+                        pass
+            
+            if articles:
+                for article in articles:
+                    title = article.get('headline', '') or article.get('title', '')
+                    url = article.get('url', '')
+                    if url and title:
+                        if url.startswith('/'):
+                            url = 'https://www.economist.com' + url
+                        if not url.startswith('http'):
+                            url = 'https://www.economist.com' + url
+                        links.append({'title': title, 'url': url})
+                print(f"从 JSON 提取到 {len(links)} 篇文章")
+                if links:
+                    return links
+    except Exception as e:
+        print(f"从 JSON 提取失败: {e}")
+    
+    # 方法2：从页面链接中提取（备用）
+    print("从 HTML 链接中提取文章...")
+    raw_links = page.evaluate('''
         () => {
             const results = [];
-            const articles = document.querySelectorAll('a[href*="/"]');
-            const seen = new Set();
             const baseUrl = 'https://www.economist.com';
+            const links = document.querySelectorAll('a[href]');
+            const seen = new Set();
             
-            articles.forEach(a => {
+            links.forEach(a => {
                 let href = a.getAttribute('href');
-                if (!href || href.includes('#') || href.includes('/podcast/') || href.includes('/video/')) {
+                if (!href || href.includes('#') || href.includes('javascript:')) {
                     return;
                 }
-                if (href.startsWith('/')) {
-                    href = baseUrl + href;
-                }
-                if (href.match(/\\/\\d{4}\\/\\d{2}\\/\\d{2}\\//) && !seen.has(href)) {
-                    seen.add(href);
-                    const title = a.innerText.trim();
-                    if (title && title.length > 10) {
-                        results.push({ title, url: href });
+                // 检查是否包含日期路径
+                if (href.match(/\\/\\d{4}\\/\\d{2}\\/\\d{2}\\//) || href.includes('/weeklyedition/')) {
+                    let fullUrl = href;
+                    if (href.startsWith('/')) {
+                        fullUrl = baseUrl + href;
+                    }
+                    if (!seen.has(fullUrl)) {
+                        seen.add(fullUrl);
+                        const title = a.innerText.trim();
+                        if (title && title.length > 10) {
+                            results.push({ title: title, url: fullUrl });
+                        }
                     }
                 }
             });
@@ -76,15 +119,17 @@ def get_article_links(page, edition_url):
         }
     ''')
     
-    # 去重
+    # 去重并过滤
     unique_links = []
     seen_urls = set()
-    for link in links:
-        if link['url'] not in seen_urls and len(link['title']) > 15:
+    for link in raw_links:
+        if link['url'] not in seen_urls and len(link['title']) > 10:
             seen_urls.add(link['url'])
-            unique_links.append(link)
+            # 只保留看起来像文章页面的链接
+            if '/weeklyedition/' not in link['url'] and '/page/' not in link['url']:
+                unique_links.append(link)
     
-    print(f"找到 {len(unique_links)} 篇文章")
+    print(f"从 HTML 提取到 {len(unique_links)} 篇文章")
     return unique_links
 
 
@@ -94,26 +139,18 @@ def fetch_article_content(page, url):
     """
     print(f"  抓取文章: {url}")
     try:
-        # ===== 修改点：使用更快的加载策略 =====
         page.goto(url, timeout=30000, wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)  # 给内容渲染一点时间
+        page.wait_for_timeout(2000)
         
-        # 尝试关闭弹窗
         try:
             page.evaluate("document.querySelectorAll('[class*=\"cookie\"], [class*=\"consent\"]').forEach(el => el.remove())")
-        except:
-            pass
-        
-        # 等待正文加载
-        try:
-            page.wait_for_selector('article, [data-component="article-body"], .article-body, .body-content, p', timeout=10000)
         except:
             pass
         
         # 提取文章数据
         article_data = page.evaluate('''
             () => {
-                // 尝试从 __NEXT_DATA__ 获取结构化数据
+                // 从 __NEXT_DATA__ 提取
                 const nextData = document.getElementById('__NEXT_DATA__');
                 let jsonData = null;
                 if (nextData) {
@@ -126,6 +163,18 @@ def fetch_article_content(page, url):
                 let title = '';
                 const titleElem = document.querySelector('h1, [data-testid="article-headline"]');
                 if (titleElem) title = titleElem.innerText.trim();
+                
+                // 如果标题为空，从 JSON 获取
+                if (!title && jsonData) {
+                    try {
+                        title = jsonData['props']['pageProps']['content']['headline'];
+                    } catch(e) {}
+                }
+                if (!title && jsonData) {
+                    try {
+                        title = jsonData['props']['pageProps']['article']['headline'];
+                    } catch(e) {}
+                }
                 
                 // 提取正文
                 let bodyText = '';
@@ -145,7 +194,6 @@ def fetch_article_content(page, url):
                     }
                 }
                 
-                // 如果正文为空，尝试获取所有段落
                 if (bodyText.length < 200) {
                     const paragraphs = document.querySelectorAll('p');
                     bodyText = Array.from(paragraphs).map(p => p.innerText.trim()).join('\\n\\n');
@@ -159,18 +207,9 @@ def fetch_article_content(page, url):
             }
         ''')
         
-        # 如果标题为空，从 URL 或 JSON 中提取
         if not article_data['title']:
-            if article_data['json_data']:
-                try:
-                    title = article_data['json_data']['props']['pageProps']['content']['headline']
-                    if title:
-                        article_data['title'] = title
-                except:
-                    pass
-            if not article_data['title']:
-                parts = url.rstrip('/').split('/')
-                article_data['title'] = parts[-1].replace('-', ' ').title()
+            parts = url.rstrip('/').split('/')
+            article_data['title'] = parts[-1].replace('-', ' ').title()
         
         return article_data
     
@@ -261,21 +300,16 @@ def main():
             bypass_csp=True
         )
         page = context.new_page()
-        
-        # 设置超时时间
         page.set_default_timeout(30000)
         
-        # 1. 获取文章列表
         article_links = get_article_links(page, edition_url)
         if not article_links:
             print("未找到任何文章，请检查网站是否可访问")
             browser.close()
             sys.exit(1)
         
-        # 2. 抓取每篇文章
         articles = []
         total = len(article_links)
-        # 限制最多50篇文章
         for i, link in enumerate(article_links[:50]):
             print(f"进度: {i+1}/{min(total, 50)}")
             article_data = fetch_article_content(page, link['url'])
@@ -288,12 +322,10 @@ def main():
             else:
                 print(f"  ✗ 正文太短或为空: {link['title']}")
             
-            # 随机延迟，避免请求过快
             time.sleep(1 + (i % 3) * 0.5)
         
         browser.close()
     
-    # 3. 生成输出文件
     if articles:
         html_file = generate_epub(articles, date_str)
         print(f"\n成功抓取 {len(articles)} 篇文章")
