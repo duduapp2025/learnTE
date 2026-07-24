@@ -20,11 +20,31 @@ def get_article_links(page, edition_url):
     从周刊页面获取所有文章链接
     """
     print(f"正在访问: {edition_url}")
-    page.goto(edition_url, timeout=60000, wait_until="networkidle")
+    
+    # ===== 修改点：使用更宽容的等待策略 =====
+    try:
+        # 先尝试快速加载
+        page.goto(edition_url, timeout=30000, wait_until="domcontentloaded")
+        # 额外等待几秒让内容渲染
+        page.wait_for_timeout(5000)
+    except Exception as e:
+        print(f"页面加载超时，尝试继续: {e}")
+        # 如果超时，尝试用更激进的方式
+        try:
+            page.goto(edition_url, timeout=30000, wait_until="commit")
+        except:
+            print("页面加载完全失败，跳过")
+            return []
+    
+    # 尝试关闭不必要的弹窗或通知
+    try:
+        page.evaluate("document.querySelectorAll('[class*=\"cookie\"], [class*=\"consent\"]').forEach(el => el.remove())")
+    except:
+        pass
     
     # 等待文章列表加载
     try:
-        page.wait_for_selector('article, [data-component="collection"]', timeout=30000)
+        page.wait_for_selector('article, a[href*="/"]', timeout=15000)
     except:
         print("警告：未找到文章容器，尝试继续...")
     
@@ -41,12 +61,10 @@ def get_article_links(page, edition_url):
                 if (!href || href.includes('#') || href.includes('/podcast/') || href.includes('/video/')) {
                     return;
                 }
-                // 只保留文章链接
                 if (href.startsWith('/')) {
                     href = baseUrl + href;
                 }
-                // 过滤出文章链接（包含日期路径）
-                if (href.match(/\/\d{4}\/\d{2}\/\d{2}\//) && !seen.has(href)) {
+                if (href.match(/\\/\\d{4}\\/\\d{2}\\/\\d{2}\\//) && !seen.has(href)) {
                     seen.add(href);
                     const title = a.innerText.trim();
                     if (title && title.length > 10) {
@@ -58,7 +76,7 @@ def get_article_links(page, edition_url):
         }
     ''')
     
-    # 去重，按标题长度过滤
+    # 去重
     unique_links = []
     seen_urls = set()
     for link in links:
@@ -76,14 +94,21 @@ def fetch_article_content(page, url):
     """
     print(f"  抓取文章: {url}")
     try:
-        page.goto(url, timeout=45000, wait_until="networkidle")
-        time.sleep(1)  # 给页面一点额外渲染时间
+        # ===== 修改点：使用更快的加载策略 =====
+        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)  # 给内容渲染一点时间
+        
+        # 尝试关闭弹窗
+        try:
+            page.evaluate("document.querySelectorAll('[class*=\"cookie\"], [class*=\"consent\"]').forEach(el => el.remove())")
+        except:
+            pass
         
         # 等待正文加载
         try:
-            page.wait_for_selector('article, [data-component="article-body"], .article-body, .body-content', timeout=15000)
+            page.wait_for_selector('article, [data-component="article-body"], .article-body, .body-content, p', timeout=10000)
         except:
-            pass  # 有些页面可能没有这些特定选择器
+            pass
         
         # 提取文章数据
         article_data = page.evaluate('''
@@ -136,7 +161,6 @@ def fetch_article_content(page, url):
         
         # 如果标题为空，从 URL 或 JSON 中提取
         if not article_data['title']:
-            # 从 JSON 中尝试获取标题
             if article_data['json_data']:
                 try:
                     title = article_data['json_data']['props']['pageProps']['content']['headline']
@@ -144,7 +168,6 @@ def fetch_article_content(page, url):
                         article_data['title'] = title
                 except:
                     pass
-            # 如果仍然没有，从 URL 提取
             if not article_data['title']:
                 parts = url.rstrip('/').split('/')
                 article_data['title'] = parts[-1].replace('-', ' ').title()
@@ -199,7 +222,6 @@ def generate_epub(articles, date_str):
 </body>
 </html>'''
     
-    # 保存 HTML 文件
     output_file = f"economist_{date_str}.html"
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(html_content)
@@ -213,7 +235,6 @@ def main():
     print("The Economist 文章抓取工具 (Playwright)")
     print("=" * 60)
     
-    # 获取日期参数
     if len(sys.argv) > 1:
         date_str = sys.argv[1]
         edition_url = f"https://www.economist.com/weeklyedition/{date_str}"
@@ -224,15 +245,25 @@ def main():
     print(f"目标: {edition_url}")
     
     with sync_playwright() as p:
-        # 启动浏览器
         browser = p.chromium.launch(
             headless=True,
-            args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage']
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--no-sandbox',
+                '--disable-setuid-sandbox'
+            ]
         )
         context = browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+            viewport={'width': 1920, 'height': 1080},
+            bypass_csp=True
         )
         page = context.new_page()
+        
+        # 设置超时时间
+        page.set_default_timeout(30000)
         
         # 1. 获取文章列表
         article_links = get_article_links(page, edition_url)
@@ -244,8 +275,9 @@ def main():
         # 2. 抓取每篇文章
         articles = []
         total = len(article_links)
-        for i, link in enumerate(article_links[:30]):  # 限制最多30篇
-            print(f"进度: {i+1}/{min(total, 30)}")
+        # 限制最多50篇文章
+        for i, link in enumerate(article_links[:50]):
+            print(f"进度: {i+1}/{min(total, 50)}")
             article_data = fetch_article_content(page, link['url'])
             if article_data['body'] and len(article_data['body']) > 100:
                 articles.append({
@@ -256,7 +288,8 @@ def main():
             else:
                 print(f"  ✗ 正文太短或为空: {link['title']}")
             
-            time.sleep(0.5)  # 礼貌性延迟
+            # 随机延迟，避免请求过快
+            time.sleep(1 + (i % 3) * 0.5)
         
         browser.close()
     
