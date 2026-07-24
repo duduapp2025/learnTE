@@ -18,6 +18,6 @@ This file is generated automatically from GitHub Releases. Issues are sorted by 
 
 | Issue date | PDF | EPUB | Release |
 | --- | --- | --- | --- |
-| — | — | — | — |
+| 2026-07-27 | [Download](https://github.com/duduapp2025/learnTE/releases/download/tm-20260727/20260727-TIME-Magazine.pdf) | [Download](https://github.com/duduapp2025/learnTE/releases/download/tm-20260727/20260727-TIME-Magazine.epub) | [View](https://github.com/duduapp2025/learnTE/releases/tag/tm-20260727) |
 
-_Total issues: 1._
+_Total issues: 2._
