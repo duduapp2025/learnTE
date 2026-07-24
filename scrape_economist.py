@@ -17,14 +17,13 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 def get_article_links(page, edition_url):
     """
-    从周刊页面获取所有文章链接 - 改进版，适配多种页面结构
+    从周刊页面获取所有文章链接 - 通用版，尝试多种提取策略
     """
     print(f"正在访问: {edition_url}")
     
     try:
-        # 使用 domcontentloaded 快速加载
         page.goto(edition_url, timeout=30000, wait_until="domcontentloaded")
-        page.wait_for_timeout(5000)  # 等待动态内容
+        page.wait_for_timeout(5000)
     except Exception as e:
         print(f"页面加载超时，尝试继续: {e}")
         try:
@@ -33,16 +32,13 @@ def get_article_links(page, edition_url):
             print("页面加载完全失败，跳过")
             return []
     
-    # 关闭可能干扰的弹窗
     try:
         page.evaluate("document.querySelectorAll('[class*=\"cookie\"], [class*=\"consent\"]').forEach(el => el.remove())")
     except:
         pass
     
-    # ===== 修改点：使用更通用的策略提取文章链接 =====
-    links = []
-    
-    # 方法1：从 __NEXT_DATA__ 中提取（最可靠）
+    # ===== 方法1：从 __NEXT_DATA__ 提取 =====
+    print("正在从 __NEXT_DATA__ 提取文章链接...")
     try:
         next_data = page.evaluate('''
             () => {
@@ -56,9 +52,8 @@ def get_article_links(page, edition_url):
             }
         ''')
         if next_data:
-            print("从 __NEXT_DATA__ 提取文章链接...")
-            # 尝试不同的数据路径
             articles = []
+            # 尝试不同的数据路径
             try:
                 articles = next_data['props']['pageProps']['content']['articles']
             except:
@@ -71,6 +66,7 @@ def get_article_links(page, edition_url):
                         pass
             
             if articles:
+                links = []
                 for article in articles:
                     title = article.get('headline', '') or article.get('title', '')
                     url = article.get('url', '')
@@ -80,36 +76,43 @@ def get_article_links(page, edition_url):
                         if not url.startswith('http'):
                             url = 'https://www.economist.com' + url
                         links.append({'title': title, 'url': url})
-                print(f"从 JSON 提取到 {len(links)} 篇文章")
                 if links:
+                    print(f"从 JSON 提取到 {len(links)} 篇文章")
                     return links
     except Exception as e:
         print(f"从 JSON 提取失败: {e}")
     
-    # 方法2：从页面链接中提取（备用）
-    print("从 HTML 链接中提取文章...")
+    # ===== 方法2：从页面 HTML 链接中提取 =====
+    print("正在从页面 HTML 中提取文章链接...")
     raw_links = page.evaluate('''
         () => {
             const results = [];
             const baseUrl = 'https://www.economist.com';
-            const links = document.querySelectorAll('a[href]');
+            const allLinks = document.querySelectorAll('a[href]');
             const seen = new Set();
             
-            links.forEach(a => {
+            allLinks.forEach(a => {
                 let href = a.getAttribute('href');
-                if (!href || href.includes('#') || href.includes('javascript:')) {
+                if (!href) return;
+                
+                if (href.startsWith('#') || href.includes('javascript:') || 
+                    href.includes('/podcast/') || href.includes('/video/') ||
+                    href.includes('/search') || href.includes('/login')) {
                     return;
                 }
-                // 检查是否包含日期路径
-                if (href.match(/\\/\\d{4}\\/\\d{2}\\/\\d{2}\\//) || href.includes('/weeklyedition/')) {
-                    let fullUrl = href;
-                    if (href.startsWith('/')) {
-                        fullUrl = baseUrl + href;
-                    }
+                
+                let fullUrl = href;
+                if (href.startsWith('/')) {
+                    fullUrl = baseUrl + href;
+                } else if (!href.startsWith('http')) {
+                    return;
+                }
+                
+                if (fullUrl.match(/https?:\\/\\/www\\.economist\\.com\\/\\d{4}\\/\\d{2}\\/\\d{2}\\//)) {
                     if (!seen.has(fullUrl)) {
                         seen.add(fullUrl);
-                        const title = a.innerText.trim();
-                        if (title && title.length > 10) {
+                        const title = a.innerText.trim().replace(/\\s+/g, ' ');
+                        if (title && title.length > 15) {
                             results.push({ title: title, url: fullUrl });
                         }
                     }
@@ -119,17 +122,18 @@ def get_article_links(page, edition_url):
         }
     ''')
     
-    # 去重并过滤
+    # 去重
     unique_links = []
     seen_urls = set()
     for link in raw_links:
-        if link['url'] not in seen_urls and len(link['title']) > 10:
+        if link['url'] not in seen_urls:
             seen_urls.add(link['url'])
-            # 只保留看起来像文章页面的链接
-            if '/weeklyedition/' not in link['url'] and '/page/' not in link['url']:
-                unique_links.append(link)
+            unique_links.append(link)
     
-    print(f"从 HTML 提取到 {len(unique_links)} 篇文章")
+    print(f"从页面 HTML 中找到 {len(unique_links)} 篇文章链接")
+    for i, link in enumerate(unique_links[:5]):
+        print(f"  示例链接 {i+1}: {link['title'][:50]}... -> {link['url']}")
+    
     return unique_links
 
 
@@ -147,10 +151,8 @@ def fetch_article_content(page, url):
         except:
             pass
         
-        # 提取文章数据
         article_data = page.evaluate('''
             () => {
-                // 从 __NEXT_DATA__ 提取
                 const nextData = document.getElementById('__NEXT_DATA__');
                 let jsonData = null;
                 if (nextData) {
@@ -159,12 +161,10 @@ def fetch_article_content(page, url):
                     } catch(e) {}
                 }
                 
-                // 提取标题
                 let title = '';
                 const titleElem = document.querySelector('h1, [data-testid="article-headline"]');
                 if (titleElem) title = titleElem.innerText.trim();
                 
-                // 如果标题为空，从 JSON 获取
                 if (!title && jsonData) {
                     try {
                         title = jsonData['props']['pageProps']['content']['headline'];
@@ -176,7 +176,6 @@ def fetch_article_content(page, url):
                     } catch(e) {}
                 }
                 
-                // 提取正文
                 let bodyText = '';
                 const bodySelectors = [
                     'article',
@@ -223,7 +222,7 @@ def fetch_article_content(page, url):
 
 def generate_epub(articles, date_str):
     """
-    生成简单的 EPUB 或 HTML 文件
+    生成简单的 HTML 文件
     """
     html_content = f'''<!DOCTYPE html>
 <html>
@@ -233,11 +232,9 @@ def generate_epub(articles, date_str):
     <style>
         body {{ font-family: 'Georgia', serif; max-width: 800px; margin: 0 auto; padding: 20px; }}
         h1 {{ text-align: center; border-bottom: 2px solid #ccc; padding-bottom: 10px; }}
-        .section {{ margin-top: 30px; }}
-        .section-title {{ font-size: 1.4em; color: #c00; border-bottom: 1px solid #ccc; }}
-        .article {{ margin: 15px 0; }}
-        .article-title {{ font-size: 1.1em; font-weight: bold; }}
-        .article-body {{ margin-top: 5px; line-height: 1.6; }}
+        .article {{ margin: 20px 0; }}
+        .article-title {{ font-size: 1.2em; font-weight: bold; }}
+        .article-body {{ margin-top: 8px; line-height: 1.6; }}
         hr {{ border: 0; border-top: 1px solid #eee; }}
     </style>
 </head>
