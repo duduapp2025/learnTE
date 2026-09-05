@@ -12,6 +12,7 @@
 |------|---------|---------|------|
 | 2026-09-05 | 9月5日 | [点击下载](https://www.filemail.com/d/njbhgjbdthtlhml) | 有效期7天|
 
+ 备用总链接：https://pan.huang1111.cn/s/weXnxsK  提取码：2tvth7
 
 ## 📅 更新时间
 2026-09-05 | 9月5日
