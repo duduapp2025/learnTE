@@ -1,5 +1,7 @@
 ## 个人使用
 
+## 更新：见Economist目录下的download link
+
 ### 使用 GitHub Actions
 
 1. Fork 本仓库到你的 GitHub 账号。
@@ -37,16 +39,6 @@ GITHUB_TOKEN=你的_GitHub_Token
 
 `.secrets`、生成的电子书和本地缓存均已加入 `.gitignore`。
 
-## 自动更新
 
-三种杂志都配置了定时工作流，也可以随时手动触发。同一期重复运行时，默认保留已有 Release 和 PDF、EPUB，不会覆盖或重复创建；手动运行并开启 **Overwrite existing Release assets** 后，才会使用新生成的文件替换原有资产。定时任务始终使用默认的不覆盖行为。
 
-## 主要组件
 
-- [Calibre](https://calibre-ebook.com/) 负责抓取、EPUB 生成和 PDF 转换。
-- GitHub Actions 负责定时运行、发布 Releases 和维护下载索引。
-- Cloudflare WARP 用于改善 GitHub Actions 运行时的网络连接。
-
-## 说明
-
-本项目仅供个人学习和技术研究使用。使用者应自行确保对相关内容的抓取、存储和传播符合当地法律、网站条款及版权要求。
