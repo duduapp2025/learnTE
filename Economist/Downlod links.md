@@ -10,4 +10,8 @@
 
 | 期数 | 发布日期 | 下载链接 | 备注 |
 |------|---------|---------|------|
-| 2026-09-05 | 9月5日 | [点击下载](https://www.filemail.com/d/njbhgjbdthtlhml) | 提取码: abcd |
+| 2026-09-05 | 9月5日 | [点击下载](https://www.filemail.com/d/njbhgjbdthtlhml) | 有效期7天|
+
+
+## 📅 更新时间
+2026-09-05 | 9月5日
