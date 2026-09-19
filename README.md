@@ -2,6 +2,8 @@
 
 ## 更新：见Economist目录下的download link
 
+## receipt配方暂时失效，无法实现抓取，去目录找download link 从网盘下载，谢谢！
+
 ### 使用 GitHub Actions
 
 1. Fork 本仓库到你的 GitHub 账号。
