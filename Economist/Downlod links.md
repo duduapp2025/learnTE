@@ -10,6 +10,7 @@
 
 | 期数 | 发布日期 | 下载链接 | 备注 |
 |------|---------|---------|------|
+| 2026-11-7 | 11月7日 | [点击下载](https://www.filemail.com/d/fbovgbnbepzduno)| 有效期7天|
 | 2026-10-31 | 10月31日 | [点击下载](https://www.filemail.com/d/btjmfedlklezwrw)| 有效期7天|
 | 2026-10-24 | 10月24日 | [点击下载](https://www.filemail.com/d/lnkiocifgejwyxd)| 有效期7天|
 | 2026-10-17 | 10月17日 | [点击下载](https://www.filemail.com/d/zagfzmazvmjnepq)| 有效期7天|
